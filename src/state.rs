@@ -6,6 +6,7 @@ use amethyst::{
     core::SystemDesc,
     derive::SystemDesc,
     input::{get_key, is_close_requested, is_key_down, VirtualKeyCode},
+    input::{InputHandler, StringBindings},
     prelude::*,
     ecs::prelude::{Join, Read, Entity, System, SystemData, World, ReadStorage, WriteStorage},
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
@@ -110,6 +111,42 @@ impl<'s> System<'s> for MoveBlocksSystem {
 }
 
 #[derive(SystemDesc)]
+pub struct BlockControllerSystem;
+
+fn clamp<T: PartialOrd> (min: T, val: T, max: T) -> T {
+    if min > val {
+        min
+    }
+    else if max < val {
+        max
+    }
+    else {
+        val
+    }
+}
+
+impl<'s> System<'s> for BlockControllerSystem {
+    type SystemData = (
+        WriteStorage<'s, Block>,
+        ReadStorage<'s, MovingBlock>,
+        Read<'s, InputHandler<StringBindings>>,
+    );
+
+    fn run(&mut self, (mut block, moving_block, input): Self::SystemData) {
+        for (mut block, _) in (&mut block, &moving_block).join() {
+            let delta : i32 = match (input.action_is_down("left"), input.action_is_down("right")) {
+                (Some(true), Some(false)) => -1,
+                (Some(false), Some(true)) => 1,
+                _ => 0,
+            };
+
+            block.coord.0 = clamp(0, block.coord.0 as i32 + delta, 9) as u32;
+        }
+    }
+}
+
+
+#[derive(SystemDesc)]
 pub struct BoardToRealTranslatorSystem;
 
 impl<'s> System<'s> for BoardToRealTranslatorSystem {
@@ -160,7 +197,7 @@ impl SimpleState for TetrisGameState {
             .with(Block::new(4, 21))
             .with(MovingBlock::new(1.))
             .with(Transform::default())
-            .with(sprites[0].clone())
+            .with(sprites[1].clone())
             .build());
 
         for i in 0..10 {
@@ -182,30 +219,30 @@ impl SimpleState for TetrisGameState {
         //     .build();
     }
 
-    fn handle_event(
-        &mut self,
-        mut _data: StateData<'_, GameData<'_, '_>>,
-        event: StateEvent,
-    ) -> SimpleTrans {
-        if let StateEvent::Window(event) = &event {
-            // Check if the window should be closed
-            if is_close_requested(&event) || is_key_down(&event, VirtualKeyCode::Escape) {
-                return Trans::Quit;
-            }
+    // fn handle_event(
+    //     &mut self,
+    //     mut _data: StateData<'_, GameData<'_, '_>>,
+    //     event: StateEvent,
+    // ) -> SimpleTrans {
+    //     if let StateEvent::Window(event) = &event {
+    //         // Check if the window should be closed
+    //         if is_close_requested(&event) || is_key_down(&event, VirtualKeyCode::Escape) {
+    //             return Trans::Quit;
+    //         }
 
-            // Listen to any key events
-            if let Some(event) = get_key(&event) {
-                info!("handling key event: {:?}", event);
-            }
+    //         // Listen to any key events
+    //         if let Some(event) = get_key(&event) {
+    //             info!("handling key event: {:?}", event);
+    //         }
 
-            // If you're looking for a more sophisticated event handling solution,
-            // including key bindings and gamepad support, please have a look at
-            // https://book.amethyst.rs/stable/pong-tutorial/pong-tutorial-03.html#capturing-user-input
-        }
+    //         // If you're looking for a more sophisticated event handling solution,
+    //         // including key bindings and gamepad support, please have a look at
+    //         // https://book.amethyst.rs/stable/pong-tutorial/pong-tutorial-03.html#capturing-user-input
+    //     }
 
-        // Keep going
-        Trans::None
-    }
+    //     // Keep going
+    //     Trans::None
+    // }
 
     fn update(&mut self, _: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
         Trans::None
