@@ -8,7 +8,7 @@ use amethyst::{
     input::{get_key, is_close_requested, is_key_down, VirtualKeyCode},
     input::{InputHandler, StringBindings},
     prelude::*,
-    ecs::prelude::{Join, Read, Entity, System, SystemData, World, ReadStorage, WriteStorage},
+    ecs::prelude::{Join, Read, Write, Entity, Entities, System, SystemData, World, ReadStorage, WriteStorage},
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
     window::ScreenDimensions,
 };
@@ -16,11 +16,11 @@ use amethyst::{
 use log::info;
 
 pub struct Block {
-    pub coord: (u32, u32),
+    pub coord: (usize, usize),
 }
 
 impl Block {
-    fn new(x: u32, y: u32) -> Self {
+    fn new(x: usize, y: usize) -> Self {
         Self {
             coord: (x, y),
         }
@@ -58,6 +58,69 @@ impl Component for MovingBlock {
 pub struct Gameboard {
     pub board: [[Option<Entity>; 10]; 24],
     pub curr_block: Option<Entity>,
+    pub to_be_placed: Vec<Entity>,
+}
+
+impl Gameboard {
+    pub fn can_place_blocks(&self, blocks: &Vec<(usize, usize)>) -> bool {
+        for &(x, y) in blocks {
+            if x >= 10 || y >= 24 {
+                return false;
+            }
+
+            if self.board[y][x] != None {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    pub fn place_blocks(&mut self, blocks: &Vec<(Entity, (usize, usize))>) {
+        for &(entity, (x, y)) in blocks {
+            if x >= 10 || y >= 24 {
+                continue;
+            }
+ 
+            self.board[y][x] = Some(entity);
+            self.to_be_placed.push(entity);
+        }
+    }
+
+    pub fn can_settle(&self, blocks: &Vec<(usize, usize)>) -> bool {
+        for &(x, y) in blocks {
+            if y == 0 || self.board[y - 1][x] != None {
+                return true;
+            } 
+        }
+
+        return false;
+    }
+
+    pub fn clear_lines(&mut self) {
+        let destroyed_lines = self.board
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &line)| if line.iter().all(|&elem| elem != None) { Some(i) } else { None })
+            .collect::<Vec<usize>>();
+        
+        if destroyed_lines.len() == 0 {
+            return;
+        }
+
+        // rewrite to clear out entities in old lines (iterate over all and act based on destroyed_lines.find check)
+        let new_to_old_mapping = (0..self.board.len())
+            .filter(|i| destroyed_lines.iter().find(|&e| e == i) == None)
+            .enumerate()
+            .collect::<Vec<(usize, usize)>>();
+
+        for &(new_line, old_line) in &new_to_old_mapping {
+            self.board[new_line] = self.board[old_line];
+        }
+
+        for idx in new_to_old_mapping.len()..24 {
+            self.board[idx] = [None; 10];
+        }
+    }
 }
 
 impl Default for Gameboard { 
@@ -65,23 +128,11 @@ impl Default for Gameboard {
         Self {
             board: [[None; 10]; 24],
             curr_block: None,
+            to_be_placed: vec![],
         }
     }
 }
 
-pub struct TetrisGameState {
-    pub gameboard: Gameboard,
-    pub settings: (u32,), // todo make this a proper thing - right now only block dimension
-}
-
-impl Default for TetrisGameState {
-    fn default() -> Self {
-        Self {
-            gameboard: Gameboard::default(),
-            settings: (60,)
-        }
-    }
-}
 
 #[derive(SystemDesc)]
 pub struct MoveBlocksSystem;
@@ -98,10 +149,7 @@ impl<'s> System<'s> for MoveBlocksSystem {
         for (moving_block, block) in (&mut moving_block, &mut transform).join() {
             moving_block.time_since_drop += seconds;
             if moving_block.time_since_drop >= moving_block.time_to_drop {
-                if block.coord.1 == 0 {
-                    // make static block / remove moving_block
-                }
-                else {
+                if block.coord.1 != 0 {
                     block.coord.1 -= 1;
                 }
                 moving_block.time_since_drop %= moving_block.time_to_drop;
@@ -130,9 +178,10 @@ impl<'s> System<'s> for BlockControllerSystem {
         WriteStorage<'s, Block>,
         ReadStorage<'s, MovingBlock>,
         Read<'s, InputHandler<StringBindings>>,
+        Read<'s, Gameboard>
     );
 
-    fn run(&mut self, (mut block, moving_block, input): Self::SystemData) {
+    fn run(&mut self, (mut block, moving_block, input, gameboard): Self::SystemData) {
         for (mut block, _) in (&mut block, &moving_block).join() {
             let delta : i32 = match (input.action_is_down("left"), input.action_is_down("right")) {
                 (Some(true), Some(false)) => -1,
@@ -140,8 +189,35 @@ impl<'s> System<'s> for BlockControllerSystem {
                 _ => 0,
             };
 
-            block.coord.0 = clamp(0, block.coord.0 as i32 + delta, 9) as u32;
+            let prev = block.coord.0;
+
+            block.coord.0 = clamp(0, block.coord.0 as i32 + delta, 9) as usize;
+            if !gameboard.can_place_blocks(&vec![block.coord]) {
+                block.coord.0 = prev;
+            }
         }
+    }
+}
+
+#[derive(SystemDesc)]
+pub struct BoardCleanerSystem;
+
+impl<'s> System<'s> for BoardCleanerSystem {
+    type SystemData = (
+        Entities<'s>,
+        ReadStorage<'s, Block>,
+        ReadStorage<'s, MovingBlock>,
+        Write<'s, Gameboard>,
+    );
+
+    fn run(&mut self, (entities, block, moving_block, mut gameboard): Self::SystemData) {
+        for (entity, block, _) in (&entities, &block, &moving_block).join() {
+            if gameboard.can_settle(&vec![block.coord]) {
+                gameboard.place_blocks(&vec![(entity, block.coord)]);
+            }
+        }
+
+        gameboard.clear_lines();
     }
 }
 
@@ -167,7 +243,17 @@ impl<'s> System<'s> for BoardToRealTranslatorSystem {
     }
 }
 
+pub struct TetrisGameState {
+    pub settings: (u32,), // todo make this a proper thing - right now only block dimension
+}
 
+impl Default for TetrisGameState {
+    fn default() -> Self {
+        Self {
+            settings: (60,)
+        }
+    }
+}
 
 impl SimpleState for TetrisGameState {
     // On start will run when this state is initialized. For more
@@ -178,7 +264,7 @@ impl SimpleState for TetrisGameState {
         world.register::<Block>();
         world.register::<MovingBlock>();
 
-        world.insert(self.settings.0);
+        world.insert(Gameboard::default());
 
         // Get the screen dimensions so we can initialize the camera and
         // place our sprites correctly later. We'll clone this since we'll
@@ -193,12 +279,13 @@ impl SimpleState for TetrisGameState {
 
 
 
-        self.gameboard.curr_block = Some(world.create_entity()
+        // falling block - to be set by something else at some point
+        world.create_entity()
             .with(Block::new(4, 21))
             .with(MovingBlock::new(1.))
             .with(Transform::default())
             .with(sprites[1].clone())
-            .build());
+            .build();
 
         for i in 0..10 {
             for j  in 0..23 {
@@ -244,7 +331,14 @@ impl SimpleState for TetrisGameState {
     //     Trans::None
     // }
 
-    fn update(&mut self, _: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+    fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+        let ref mut items = data.world.write_resource::<Gameboard>();
+        for &e in &items.to_be_placed {
+            data.world.write_storage::<MovingBlock>().remove(e);
+        }
+        items.to_be_placed.clear();
+
+
         Trans::None
     }
 }

@@ -38,8 +38,9 @@ fn main() -> amethyst::Result<()> {
         )?
         .with_bundle(input_bundle)?
         .with(state::BlockControllerSystem, "block_controller", &["input_system"])
-        .with(state::MoveBlocksSystem, "block_system", &["block_controller"])
-        .with(state::BoardToRealTranslatorSystem, "board_to_real_system", &["block_system"])
+        .with(state::MoveBlocksSystem, "move_blocks", &["block_controller"])
+        .with(state::BoardCleanerSystem, "board_cleaner", &["move_blocks"])
+        .with(state::BoardToRealTranslatorSystem, "board_to_real", &["board_cleaner"])
         ;
 
     let mut game = Application::new(resources, state::TetrisGameState::default(), game_data)?;
