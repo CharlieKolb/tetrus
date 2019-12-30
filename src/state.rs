@@ -91,7 +91,7 @@ impl Gameboard {
         return false;
     }
 
-    pub fn clear_lines(&mut self) {
+    pub fn clear_lines(&mut self) -> Vec<(Entity, (usize, usize))> {
         let destroyed_lines = self.board
             .iter()
             .enumerate()
@@ -99,7 +99,7 @@ impl Gameboard {
             .collect::<Vec<usize>>();
         
         if destroyed_lines.len() == 0 {
-            return;
+            return vec![];
         }
 
         let new_to_old_mapping = (0..self.board.len())
@@ -108,9 +108,8 @@ impl Gameboard {
             .collect::<Vec<(usize, usize)>>();
 
         let board = self.board;
-        let done_entities = &mut self.done_entities;
 
-        done_entities.extend(
+        self.done_entities.extend(
             destroyed_lines
                 .iter()
                 .flat_map(|&idx| board[idx].iter().filter_map(|&e| e))
@@ -123,6 +122,17 @@ impl Gameboard {
         for idx in new_to_old_mapping.len()..24 {
             self.board[idx] = [None; 10];
         }
+
+        self.board[destroyed_lines[0]..]
+            .iter()
+            .enumerate()
+            .flat_map(|(j, line)| line
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, &e)| e.map(|x| (i, x)))
+                                    .map(move |(i, e)| (e, (i, j)))
+            )
+            .collect()
     }
 }
 
@@ -162,7 +172,19 @@ impl<'s> System<'s> for MoveBlocksSystem {
 }
 
 #[derive(SystemDesc)]
-pub struct BlockControllerSystem;
+pub struct BlockControllerSystem {
+    time_since_move: f32,
+    time_to_move: f32,
+}
+
+impl BlockControllerSystem {
+    pub fn new() -> Self {
+        Self {
+            time_since_move: 0.,
+            time_to_move: 0.1,
+        }
+    }
+}
 
 fn clamp<T: PartialOrd> (min: T, val: T, max: T) -> T {
     if min > val {
@@ -181,10 +203,18 @@ impl<'s> System<'s> for BlockControllerSystem {
         WriteStorage<'s, Block>,
         ReadStorage<'s, MovingBlock>,
         Read<'s, InputHandler<StringBindings>>,
-        Read<'s, Gameboard>
+        Read<'s, Gameboard>,
+        Read<'s, Time>
     );
 
-    fn run(&mut self, (mut block, moving_block, input, gameboard): Self::SystemData) {
+    fn run(&mut self, (mut block, moving_block, input, gameboard, time): Self::SystemData) {
+        self.time_since_move += time.delta_seconds();
+        if self.time_since_move < self.time_to_move {
+            return;
+        }
+        self.time_since_move -= self.time_to_move;
+        
+
         for (mut block, _) in (&mut block, &moving_block).join() {
             let delta : i32 = match (input.action_is_down("left"), input.action_is_down("right")) {
                 (Some(true), Some(false)) => -1,
@@ -203,9 +233,9 @@ impl<'s> System<'s> for BlockControllerSystem {
 }
 
 #[derive(SystemDesc)]
-pub struct BoardCleanerSystem;
+pub struct BoardSettlerSystem;
 
-impl<'s> System<'s> for BoardCleanerSystem {
+impl<'s> System<'s> for BoardSettlerSystem {
     type SystemData = (
         Entities<'s>,
         ReadStorage<'s, Block>,
@@ -223,15 +253,34 @@ impl<'s> System<'s> for BoardCleanerSystem {
             }
         }
 
-        // todo remove entities from world
-        gameboard.clear_lines();
-
         for &e in &to_be_unmoved {
             moving_block.remove(e);
         }
 
     }
 }
+
+#[derive(SystemDesc)]
+pub struct BoardLineClearerSystem;
+
+impl<'s> System<'s> for BoardLineClearerSystem {
+    type SystemData = (
+        Entities<'s>,
+        WriteStorage<'s, Block>,
+        Write<'s, Gameboard>
+    );
+
+    fn run(&mut self, (entities, mut blocks, mut gameboard): Self::SystemData) {
+        let entity_map : std::collections::HashMap<Entity, (usize, usize)> = gameboard.clear_lines().into_iter().collect();
+        
+        for (entity, mut block) in (&entities, &mut blocks).join() {
+            if let Some(&coord) = entity_map.get(&entity) {
+                block.coord = coord;
+            }
+        }
+    }
+}
+
 
 
 #[derive(SystemDesc)]
@@ -341,7 +390,7 @@ impl SimpleState for TetrisGameState {
             data.world.write_resource::<Gameboard>().curr_block = Some(
             data.world.create_entity()
                 .with(Block::new(4, 21))
-                .with(MovingBlock::new(30.))
+                .with(MovingBlock::new(15.))
                 .with(Transform::default())
                 .with(self.sprites[1].clone())
                 .build());

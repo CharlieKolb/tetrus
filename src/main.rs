@@ -37,10 +37,11 @@ fn main() -> amethyst::Result<()> {
                 .with_plugin(RenderFlat2D::default()),
         )?
         .with_bundle(input_bundle)?
-        .with(state::BlockControllerSystem, "block_controller", &["input_system"])
+        .with(state::BlockControllerSystem::new(), "block_controller", &["input_system"])
         .with(state::MoveBlocksSystem, "move_blocks", &["block_controller"])
-        .with(state::BoardCleanerSystem, "board_cleaner", &["move_blocks"])
-        .with(state::BoardToRealTranslatorSystem, "board_to_real", &["board_cleaner"])
+        .with(state::BoardSettlerSystem, "board_settler", &["move_blocks"])
+        .with(state::BoardLineClearerSystem, "board_clearer", &["board_settler"])
+        .with(state::BoardToRealTranslatorSystem, "board_to_real", &["board_clearer"])
         ;
 
     let mut game = Application::new(resources, state::TetrisGameState::default(), game_data)?;
