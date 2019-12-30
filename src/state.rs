@@ -58,7 +58,7 @@ impl Component for MovingBlock {
 pub struct Gameboard {
     pub board: [[Option<Entity>; 10]; 24],
     pub curr_block: Option<Entity>,
-    pub to_be_placed: Vec<Entity>,
+    pub done_entities: Vec<Entity>,
 }
 
 impl Gameboard {
@@ -77,12 +77,7 @@ impl Gameboard {
 
     pub fn place_blocks(&mut self, blocks: &Vec<(Entity, (usize, usize))>) {
         for &(entity, (x, y)) in blocks {
-            if x >= 10 || y >= 24 {
-                continue;
-            }
- 
             self.board[y][x] = Some(entity);
-            self.to_be_placed.push(entity);
         }
     }
 
@@ -107,11 +102,19 @@ impl Gameboard {
             return;
         }
 
-        // rewrite to clear out entities in old lines (iterate over all and act based on destroyed_lines.find check)
         let new_to_old_mapping = (0..self.board.len())
             .filter(|i| destroyed_lines.iter().find(|&e| e == i) == None)
             .enumerate()
             .collect::<Vec<(usize, usize)>>();
+
+        let board = self.board;
+        let done_entities = &mut self.done_entities;
+
+        done_entities.extend(
+            destroyed_lines
+                .iter()
+                .flat_map(|&idx| board[idx].iter().filter_map(|&e| e))
+        );
 
         for &(new_line, old_line) in &new_to_old_mapping {
             self.board[new_line] = self.board[old_line];
@@ -128,7 +131,7 @@ impl Default for Gameboard {
         Self {
             board: [[None; 10]; 24],
             curr_block: None,
-            to_be_placed: vec![],
+            done_entities: vec![],
         }
     }
 }
@@ -206,18 +209,27 @@ impl<'s> System<'s> for BoardCleanerSystem {
     type SystemData = (
         Entities<'s>,
         ReadStorage<'s, Block>,
-        ReadStorage<'s, MovingBlock>,
+        WriteStorage<'s, MovingBlock>,
         Write<'s, Gameboard>,
     );
 
-    fn run(&mut self, (entities, block, moving_block, mut gameboard): Self::SystemData) {
+    fn run(&mut self, (entities, block, mut moving_block, mut gameboard): Self::SystemData) {
+        let mut to_be_unmoved = vec![];
         for (entity, block, _) in (&entities, &block, &moving_block).join() {
             if gameboard.can_settle(&vec![block.coord]) {
                 gameboard.place_blocks(&vec![(entity, block.coord)]);
+                to_be_unmoved.push(entity);
+                gameboard.curr_block = None;
             }
         }
 
+        // todo remove entities from world
         gameboard.clear_lines();
+
+        for &e in &to_be_unmoved {
+            moving_block.remove(e);
+        }
+
     }
 }
 
@@ -245,12 +257,14 @@ impl<'s> System<'s> for BoardToRealTranslatorSystem {
 
 pub struct TetrisGameState {
     pub settings: (u32,), // todo make this a proper thing - right now only block dimension
+    pub sprites: Vec<SpriteRender>,
 }
 
 impl Default for TetrisGameState {
     fn default() -> Self {
         Self {
-            settings: (60,)
+            settings: (60,),
+            sprites: vec![],
         }
     }
 }
@@ -261,8 +275,6 @@ impl SimpleState for TetrisGameState {
     // https://book.amethyst.rs/stable/concepts/state.html#life-cycle
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
         let world = data.world;
-        world.register::<Block>();
-        world.register::<MovingBlock>();
 
         world.insert(Gameboard::default());
 
@@ -275,26 +287,16 @@ impl SimpleState for TetrisGameState {
         init_camera(world, &dimensions);
 
         // Load our sprites and display them
-        let sprites = load_sprites(world);
-
-
-
-        // falling block - to be set by something else at some point
-        world.create_entity()
-            .with(Block::new(4, 21))
-            .with(MovingBlock::new(1.))
-            .with(Transform::default())
-            .with(sprites[1].clone())
-            .build();
+        self.sprites = load_sprites(world);
 
         for i in 0..10 {
             for j  in 0..23 {
-                world.create_entity()
-                    .with(Block::new(i, j))
-                    // .with(MovingBlock::new(1.))
-                    .with(Transform::default())
-                    .with(sprites[0].clone())
-                    .build();
+                // world.create_entity()
+                //     .with(Block::new(i, j))
+                //     // .with(MovingBlock::new(1.))
+                //     .with(Transform::default())
+                //     .with(self.sprites[0].clone())
+                //     .build();
             }
         }
 
@@ -332,12 +334,25 @@ impl SimpleState for TetrisGameState {
     // }
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
-        let ref mut items = data.world.write_resource::<Gameboard>();
-        for &e in &items.to_be_placed {
-            data.world.write_storage::<MovingBlock>().remove(e);
-        }
-        items.to_be_placed.clear();
+        if data.world.read_resource::<Gameboard>().curr_block == None {
+            // Load our sprites and display them
 
+            // falling block - to be set by something else at some point
+            data.world.write_resource::<Gameboard>().curr_block = Some(
+            data.world.create_entity()
+                .with(Block::new(4, 21))
+                .with(MovingBlock::new(30.))
+                .with(Transform::default())
+                .with(self.sprites[1].clone())
+                .build());
+        }
+
+        let mut to_be_deleted = vec![];
+        std::mem::swap(&mut to_be_deleted, &mut data.world.write_resource::<Gameboard>().done_entities);
+
+        for e in to_be_deleted {
+            data.world.delete_entity(e).ok();
+        }
 
         Trans::None
     }
