@@ -27,6 +27,17 @@ impl Block {
     }
 }
 
+fn coord_to_transform((x, y): (usize, usize)) -> Transform {
+    let block_dimension = 16; // figure out how to read this based on state
+    let mut transform = Transform::default();
+    transform.set_translation_xyz(
+        (block_dimension / 2 + x * block_dimension) as f32,
+        (block_dimension / 2 + y * block_dimension) as f32,
+        0. 
+    );
+    transform
+}
+
 // impl Default for Block {
 //     fn default() -> Self {
 //         Self::new()
@@ -282,7 +293,6 @@ impl<'s> System<'s> for BoardLineClearerSystem {
 }
 
 
-
 #[derive(SystemDesc)]
 pub struct BoardToRealTranslatorSystem;
 
@@ -293,13 +303,8 @@ impl<'s> System<'s> for BoardToRealTranslatorSystem {
     );
 
     fn run(&mut self, (block, mut transform): Self::SystemData) {
-        let block_dimension = 16; // figure out how to read this based on state
         for (block, transform) in (&block, &mut transform).join() {
-            transform.set_translation_xyz(
-                (block_dimension / 2 + block.coord.0 * block_dimension) as f32,
-                (block_dimension / 2 + (block.coord.1) * block_dimension ) as f32,
-                0. 
-            );
+            transform.set_translation(*coord_to_transform(block.coord).translation());
         }
     }
 }
@@ -391,7 +396,7 @@ impl SimpleState for TetrisGameState {
             data.world.create_entity()
                 .with(Block::new(4, 21))
                 .with(MovingBlock::new(15.))
-                .with(Transform::default())
+                .with(coord_to_transform((4, 21)))
                 .with(self.sprites[1].clone())
                 .build());
         }
