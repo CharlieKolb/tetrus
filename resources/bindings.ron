@@ -4,5 +4,7 @@
   actions: {
     "left": [[Key(A)]],
     "right": [[Key(D)]],
+    "up": [[Key(W)]],
+    "down": [[Key(S)]],
   },
 )

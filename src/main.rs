@@ -37,9 +37,10 @@ fn main() -> amethyst::Result<()> {
                 .with_plugin(RenderFlat2D::default()),
         )?
         .with_bundle(input_bundle)?
-        .with(state::BlockControllerSystem::new(), "block_controller", &["input_system"])
-        .with(state::MoveBlocksSystem, "move_blocks", &["block_controller"])
-        .with(state::BoardSettlerSystem, "board_settler", &["move_blocks"])
+        .with(state::PieceControllerSystem::new(), "piece_controller", &["input_system"])
+        .with(state::MovePieceSystem, "move_pieces", &["piece_controller"])
+        .with(state::PieceSyncSystem, "piece_sync", &["move_pieces"])
+        .with(state::BoardSettlerSystem, "board_settler", &["piece_sync"])
         .with(state::BoardLineClearerSystem, "board_clearer", &["board_settler"])
         .with(state::BoardToRealTranslatorSystem, "board_to_real", &["board_clearer"])
         ;

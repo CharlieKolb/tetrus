@@ -13,7 +13,238 @@ use amethyst::{
     window::ScreenDimensions,
 };
 
+use rand::{ Rng, seq::SliceRandom };
+
+use std::iter::FromIterator;
+
 use log::info;
+
+type Board = [[Option<Entity>; 10]; 24];
+
+pub struct PieceBlock {}
+
+impl Component for PieceBlock {
+    type Storage = DenseVecStorage<Self>;
+}
+
+#[derive(Clone, Debug)]
+pub struct Piece {
+    pub relative_coords: Vec<[(usize, usize); 4]>,
+    pub idx: usize,
+    pub coord: (usize, usize),
+    pub time_since_drop: f32, // time in seconds since last drop
+    pub base_time_to_drop: f32, // in blocks per second
+    pub curr_time_to_drop: f32, // in blocks per second
+    pub block_idx: usize, // 0 to 6
+}
+
+impl Component for Piece {
+    type Storage = DenseVecStorage<Self>;
+}
+
+fn make_piece_I(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 0), (0, 1), (0, 2), (0, 3)],
+            [(0, 0), (1, 0), (2, 0), (3, 0)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 0,
+    }
+}
+
+fn make_piece_L(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 0), (1, 0), (1, 1), (1, 2)],
+            [(0, 1), (1, 1), (2, 1), (2, 0)],
+            [(0, 0), (0, 1), (0, 2), (1, 2)],
+            [(0, 0), (1, 0), (2, 0), (0, 1)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 1,
+    }
+}
+
+fn make_piece_rev_L(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 0), (0, 1), (0, 2), (1, 0)],
+            [(0, 0), (1, 0), (2, 0), (2, 1)],
+            [(1, 0), (1, 1), (1, 2), (0, 2)],
+            [(0, 0), (0, 1), (1, 1), (2, 1)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 2,
+    }
+}
+
+fn make_piece_square(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 0), (0, 1), (1, 0), (1, 1)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 3,
+    }
+}
+
+fn make_piece_T(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 1), (1, 1), (2, 1), (1, 0)],
+            [(0, 0), (0, 1), (0, 2), (1, 1)],
+            [(0, 0), (1, 0), (2, 0), (1, 1)],
+            [(0, 1), (1, 0), (1, 1), (1, 2)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 4,
+    }
+}
+
+fn make_piece_S(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(0, 0), (0, 1), (1, 1), (1, 2)],
+            [(0, 1), (1, 1), (1, 0), (2, 0)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 5,
+    }
+}
+
+fn make_piece_Z(coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+    Piece {
+        relative_coords: vec![
+            [(1, 0), (1, 1), (0, 1), (0, 2)],
+            [(0, 0), (1, 0), (1, 1), (2, 1)],
+        ],
+        idx: 0,
+        coord,
+        time_since_drop: 0.,
+        base_time_to_drop: 1./blocks_per_second_drop_speed,
+        curr_time_to_drop: 1./blocks_per_second_drop_speed,
+        block_idx: 6,
+    }
+}
+
+fn has_collision(piece: &Piece, board: &Board) -> bool {
+    for &(x, y) in piece.relative_coords[piece.idx].iter() {
+        let abs_x = piece.coord.0 + x;
+        let abs_y = piece.coord.1 as i64 - y as i64;
+        if abs_x >= 10 || abs_y < 0 || board[abs_y as usize][abs_x] != None {
+            return true;
+        }
+    }
+    false
+}
+
+impl Piece {
+    // todo next and prev with bound checks and possible reverse
+    fn next(&mut self, board: &Board)  {
+        // backwards feels better
+        let prev_idx = self.idx;
+        self.idx = (self.idx + 3) % self.relative_coords.len();
+        
+        if has_collision(&self, &board) {
+            // try again with left, right, up and down (all combinations?)
+            self.idx = prev_idx;
+        }
+    }
+
+    fn get_abs(&self) -> Vec<(usize, usize)> {
+        self.relative_coords[self.idx].iter().map(|&(lX, lY)| (lX + self.coord.0, lY + self.coord.1)).collect()
+    }
+
+    fn move_down(&mut self, board: &Board) {
+        if self.coord.1 != 0 {
+            self.coord.1 -= 1;
+        }
+        if has_collision(&self, &board) {
+            // self.coord.1 += 1;
+        }
+    }
+}
+
+pub struct PieceGenerator {
+    current: Vec<Piece>,
+    next_pieces: Vec<Piece>,
+    options: [Piece; 7],
+}
+
+impl PieceGenerator {
+    fn new() -> Self {
+        let mut optionsInput =  [
+            make_piece_I((0, 0), 0.),
+            make_piece_S((0, 0), 0.),
+            make_piece_Z((0, 0), 0.),
+            make_piece_L((0, 0), 0.),
+            make_piece_rev_L((0, 0), 0.),
+            make_piece_square((0, 0), 0.),
+            make_piece_T((0, 0), 0.),            
+        ];
+        let options = optionsInput.clone();
+        optionsInput.shuffle(&mut rand::thread_rng());
+        let current = Vec::from_iter(optionsInput.iter().cloned());
+        
+        optionsInput.shuffle(&mut rand::thread_rng());
+        let next_pieces = Vec::from_iter(optionsInput.iter().cloned());
+
+
+        Self {
+            options,
+            current,
+            next_pieces
+        }
+    }
+
+    fn peek(&self) -> Piece {
+        self.current[0].clone()
+    }
+
+    fn next(&mut self, coord: (usize, usize), blocks_per_second_drop_speed: f32) -> Piece {
+        let mut out = if self.current.len() == 1 {
+            let piece = self.current[0].clone();
+            self.options.shuffle(&mut rand::thread_rng());
+
+            std::mem::swap(&mut self.current, &mut self.next_pieces);
+            self.next_pieces = Vec::from_iter(self.options.iter().cloned());
+
+            piece
+        } else {
+            self.current.remove(0)
+        };
+
+        out.coord = coord;
+        out.base_time_to_drop = 1./blocks_per_second_drop_speed;
+        out.curr_time_to_drop = 1./blocks_per_second_drop_speed;
+        out
+    }
+}
 
 pub struct Block {
     pub coord: (usize, usize),
@@ -48,27 +279,10 @@ impl Component for Block {
     type Storage = DenseVecStorage<Self>;
 }
 
-pub struct MovingBlock {
-    pub time_since_drop: f32, // time in seconds since last drop
-    pub time_to_drop: f32, // in blocks per second
-}
-
-impl MovingBlock {
-    fn new(blocks_per_second_drop_speed: f32) -> Self {
-        Self {
-            time_since_drop: 0.,
-            time_to_drop: 1./blocks_per_second_drop_speed,
-        }
-    }
-}
-
-impl Component for MovingBlock {
-    type Storage = DenseVecStorage<Self>;
-}
 
 pub struct Gameboard {
     pub board: [[Option<Entity>; 10]; 24],
-    pub curr_block: Option<Entity>,
+    pub curr_piece: Option<Entity>,
     pub done_entities: Vec<Entity>,
 }
 
@@ -90,6 +304,10 @@ impl Gameboard {
         for &(entity, (x, y)) in blocks {
             self.board[y][x] = Some(entity);
         }
+    }
+
+    pub fn override_entity(&mut self, entity: Entity, coord: (usize, usize)) {
+        self.board[coord.1][coord.0] = Some(entity);
     }
 
     pub fn can_settle(&self, blocks: &Vec<(usize, usize)>) -> bool {
@@ -134,7 +352,7 @@ impl Gameboard {
             self.board[idx] = [None; 10];
         }
 
-        self.board[destroyed_lines[0]..]
+        self.board
             .iter()
             .enumerate()
             .flat_map(|(j, line)| line
@@ -151,7 +369,7 @@ impl Default for Gameboard {
     fn default() -> Self {
         Self {
             board: [[None; 10]; 24],
-            curr_block: None,
+            curr_piece: None,
             done_entities: vec![],
         }
     }
@@ -159,40 +377,42 @@ impl Default for Gameboard {
 
 
 #[derive(SystemDesc)]
-pub struct MoveBlocksSystem;
+pub struct MovePieceSystem;
 
-impl<'s> System<'s> for MoveBlocksSystem {
+impl<'s> System<'s> for MovePieceSystem {
     type SystemData = (
-        WriteStorage<'s, MovingBlock>,
-        WriteStorage<'s, Block>,
+        WriteStorage<'s, Piece>,
+        Read<'s, Gameboard>,
         Read<'s, Time>,
     );
 
-    fn run(&mut self, (mut moving_block, mut transform, time): Self::SystemData) {
+    fn run(&mut self, (mut pieces, gameboard, time): Self::SystemData) {
         let seconds = time.delta_seconds();
-        for (moving_block, block) in (&mut moving_block, &mut transform).join() {
-            moving_block.time_since_drop += seconds;
-            if moving_block.time_since_drop >= moving_block.time_to_drop {
-                if block.coord.1 != 0 {
-                    block.coord.1 -= 1;
-                }
-                moving_block.time_since_drop %= moving_block.time_to_drop;
+        for piece in (&mut pieces).join() {
+            piece.time_since_drop += seconds;
+            if piece.time_since_drop >= piece.curr_time_to_drop {
+                piece.move_down(&gameboard.board);
+                piece.time_since_drop %= piece.curr_time_to_drop;
             }
         }
     }
 }
 
 #[derive(SystemDesc)]
-pub struct BlockControllerSystem {
-    time_since_move: f32,
-    time_to_move: f32,
+pub struct PieceControllerSystem {
+    curr_move_cd: f32,
+    move_cd: f32,
+    curr_rotate_cd: f32,
+    rotate_cd: f32,
 }
 
-impl BlockControllerSystem {
+impl PieceControllerSystem {
     pub fn new() -> Self {
         Self {
-            time_since_move: 0.,
-            time_to_move: 0.1,
+            curr_move_cd: 0.,
+            move_cd: 0.08,
+            curr_rotate_cd: 0.,
+            rotate_cd: 0.2,
         }
     }
 }
@@ -209,35 +429,62 @@ fn clamp<T: PartialOrd> (min: T, val: T, max: T) -> T {
     }
 }
 
-impl<'s> System<'s> for BlockControllerSystem {
+impl<'s> System<'s> for PieceControllerSystem {
     type SystemData = (
-        WriteStorage<'s, Block>,
-        ReadStorage<'s, MovingBlock>,
+        WriteStorage<'s, Piece>,
         Read<'s, InputHandler<StringBindings>>,
         Read<'s, Gameboard>,
         Read<'s, Time>
     );
 
-    fn run(&mut self, (mut block, moving_block, input, gameboard, time): Self::SystemData) {
-        self.time_since_move += time.delta_seconds();
-        if self.time_since_move < self.time_to_move {
-            return;
-        }
-        self.time_since_move -= self.time_to_move;
-        
+    fn run(&mut self, (mut pieces, input, gameboard, time): Self::SystemData) {
+        // this only works with ever having one piece
+        // rotate_cd behaves weirdly
+        for mut piece in (&mut pieces).join() {
+            if input.action_is_down("down").unwrap_or(false) {
+                piece.curr_time_to_drop = 0.2 * piece.base_time_to_drop;
+            }
+            else {
+                piece.curr_time_to_drop = piece.base_time_to_drop;
+            }
+            
+            if self.curr_rotate_cd == 0. {
+                if input.action_is_down("up").unwrap_or(false) {
+                    piece.next(&gameboard.board);
+                    self.curr_rotate_cd = self.rotate_cd;
+                }
+            }
+            else {
+                self.curr_rotate_cd = f32::max(0., self.curr_rotate_cd - time.delta_seconds());
+                if !input.action_is_down("up").unwrap_or(false) {
+                    self.curr_rotate_cd = 0.;
+                }
+            }
+            
 
-        for (mut block, _) in (&mut block, &moving_block).join() {
-            let delta : i32 = match (input.action_is_down("left"), input.action_is_down("right")) {
-                (Some(true), Some(false)) => -1,
-                (Some(false), Some(true)) => 1,
-                _ => 0,
-            };
+            if self.curr_move_cd == 0. {
+                let delta : i32 = match (input.action_is_down("left"), input.action_is_down("right")) {
+                    (Some(true), Some(false)) => -1,
+                    (Some(false), Some(true)) => 1,
+                    _ => 0,
+                };
 
-            let prev = block.coord.0;
-
-            block.coord.0 = clamp(0, block.coord.0 as i32 + delta, 9) as usize;
-            if !gameboard.can_place_blocks(&vec![block.coord]) {
-                block.coord.0 = prev;
+                if delta != 0 {
+                    self.curr_move_cd = self.move_cd;
+                }
+    
+                let prev = piece.coord.0;
+    
+                piece.coord.0 = clamp(0, piece.coord.0 as i32 + delta, 9) as usize;
+                if !gameboard.can_place_blocks(&piece.get_abs()) {
+                    piece.coord.0 = prev;
+                }
+            }
+            else {
+                self.curr_move_cd = clamp(0., self.curr_move_cd - time.delta_seconds(), self.move_cd);
+                if !input.action_is_down("left").unwrap_or(false) && !input.action_is_down("right").unwrap_or(false) {
+                    self.curr_move_cd = 0.;
+                }
             }
         }
     }
@@ -249,25 +496,33 @@ pub struct BoardSettlerSystem;
 impl<'s> System<'s> for BoardSettlerSystem {
     type SystemData = (
         Entities<'s>,
+        WriteStorage<'s, Piece>,
+        WriteStorage<'s, PieceBlock>,
         ReadStorage<'s, Block>,
-        WriteStorage<'s, MovingBlock>,
         Write<'s, Gameboard>,
     );
 
-    fn run(&mut self, (entities, block, mut moving_block, mut gameboard): Self::SystemData) {
-        let mut to_be_unmoved = vec![];
-        for (entity, block, _) in (&entities, &block, &moving_block).join() {
-            if gameboard.can_settle(&vec![block.coord]) {
-                gameboard.place_blocks(&vec![(entity, block.coord)]);
-                to_be_unmoved.push(entity);
-                gameboard.curr_block = None;
+    fn run(&mut self, (entities, mut pieces, mut piece_blocks, blocks, mut gameboard): Self::SystemData) {
+        let mut to_be_deleted = vec![];
+        for (entity, piece) in (&entities, &pieces).join() {
+            if gameboard.can_settle(&piece.get_abs()) {
+                gameboard.place_blocks(&piece.get_abs().iter().map(|&abs| (entity, abs)).collect());
+                to_be_deleted.push(entity);
+                gameboard.curr_piece = None;
             }
         }
 
-        for &e in &to_be_unmoved {
-            moving_block.remove(e);
-        }
+        for &e in &to_be_deleted {
+            pieces.remove(e);
 
+            let entities_tbr = (&entities, &mut piece_blocks).join().map(|(e, _)| e).collect::<Vec<Entity>>();
+            for e in entities_tbr {
+                if let Some(block) = blocks.get(e) {
+                    gameboard.override_entity(e, block.coord);
+                }
+                piece_blocks.remove(e);
+            }
+        }
     }
 }
 
@@ -283,7 +538,6 @@ impl<'s> System<'s> for BoardLineClearerSystem {
 
     fn run(&mut self, (entities, mut blocks, mut gameboard): Self::SystemData) {
         let entity_map : std::collections::HashMap<Entity, (usize, usize)> = gameboard.clear_lines().into_iter().collect();
-        
         for (entity, mut block) in (&entities, &mut blocks).join() {
             if let Some(&coord) = entity_map.get(&entity) {
                 block.coord = coord;
@@ -292,6 +546,27 @@ impl<'s> System<'s> for BoardLineClearerSystem {
     }
 }
 
+#[derive(SystemDesc)]
+pub struct PieceSyncSystem;
+
+impl<'s> System<'s> for PieceSyncSystem {
+    type SystemData = (
+        ReadStorage<'s, Piece>,
+        ReadStorage<'s, PieceBlock>,
+        WriteStorage<'s, Block>
+    );
+
+    fn run(&mut self, (pieces, piece_blocks, mut blocks): Self::SystemData) {
+        for piece in (pieces).join() {
+            let coords = piece.get_abs();
+            for (idx, (pB, mut block)) in (&piece_blocks, &mut blocks).join().enumerate() {
+                if idx < 4 {
+                    block.coord = coords[idx];
+                }
+            }
+        }
+    }
+}
 
 #[derive(SystemDesc)]
 pub struct BoardToRealTranslatorSystem;
@@ -311,6 +586,7 @@ impl<'s> System<'s> for BoardToRealTranslatorSystem {
 
 pub struct TetrisGameState {
     pub settings: (u32,), // todo make this a proper thing - right now only block dimension
+    pub pieceGenerator: PieceGenerator,
     pub sprites: Vec<SpriteRender>,
 }
 
@@ -318,6 +594,7 @@ impl Default for TetrisGameState {
     fn default() -> Self {
         Self {
             settings: (60,),
+            pieceGenerator: PieceGenerator::new(),
             sprites: vec![],
         }
     }
@@ -342,24 +619,6 @@ impl SimpleState for TetrisGameState {
 
         // Load our sprites and display them
         self.sprites = load_sprites(world);
-
-        for i in 0..10 {
-            for j  in 0..23 {
-                // world.create_entity()
-                //     .with(Block::new(i, j))
-                //     // .with(MovingBlock::new(1.))
-                //     .with(Transform::default())
-                //     .with(self.sprites[0].clone())
-                //     .build();
-            }
-        }
-
-        // world.create_entity()
-        //     .with(Block::new())
-        //     .with(MovingBlock::new(30.))
-        //     .with(block_transform2)
-        //     .with(sprites[1].clone())
-        //     .build();
     }
 
     // fn handle_event(
@@ -388,22 +647,30 @@ impl SimpleState for TetrisGameState {
     // }
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
-        if data.world.read_resource::<Gameboard>().curr_block == None {
+        if data.world.read_resource::<Gameboard>().curr_piece == None {
             // Load our sprites and display them
 
+            let piece = self.pieceGenerator.next((4, 20), 5.);
+            let block_idx = piece.block_idx;
             // falling block - to be set by something else at some point
-            data.world.write_resource::<Gameboard>().curr_block = Some(
-            data.world.create_entity()
-                .with(Block::new(4, 21))
-                .with(MovingBlock::new(15.))
-                .with(coord_to_transform((4, 21)))
-                .with(self.sprites[1].clone())
-                .build());
+            data.world.write_resource::<Gameboard>().curr_piece = Some(
+                data.world.create_entity()
+                    .with(piece)
+                    .build()
+                );
+
+            for i in 0..4 {
+                data.world.create_entity()
+                    .with(PieceBlock {})
+                    .with(Block::new(4, 20 + i))
+                    .with(coord_to_transform((4, 20 + i)))
+                    .with(self.sprites[block_idx].clone())
+                    .build();
+            }
         }
 
         let mut to_be_deleted = vec![];
         std::mem::swap(&mut to_be_deleted, &mut data.world.write_resource::<Gameboard>().done_entities);
-
         for e in to_be_deleted {
             data.world.delete_entity(e).ok();
         }
@@ -456,7 +723,7 @@ fn load_sprites(world: &mut World) -> Vec<SpriteRender> {
     // Create our sprite renders. Each will have a handle to the texture
     // that it renders from. The handle is safe to clone, since it just
     // references the asset.
-    (0..2)
+    (0..7)
         .map(|i| SpriteRender {
             sprite_sheet: sheet_handle.clone(),
             sprite_number: i,

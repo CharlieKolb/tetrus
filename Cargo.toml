@@ -13,3 +13,4 @@ features = ["vulkan", "audio", "gltf"]
 
 [dependencies]
 log = { version = "0.4.8", features = ["serde"] }
+rand = "0.7.3"

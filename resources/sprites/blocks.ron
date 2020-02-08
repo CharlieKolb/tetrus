@@ -1,5 +1,5 @@
 (
-    texture_width: 32,
+    texture_width: 112,
     texture_height: 16,
     sprites: [
         (
@@ -10,6 +10,36 @@
         ),
         (
             x: 16,
+            y: 0,
+            width: 16,
+            height: 16,
+        ),
+		(
+            x: 32,
+            y: 0,
+            width: 16,
+            height: 16,
+        ),
+        (
+            x: 48,
+            y: 0,
+            width: 16,
+            height: 16,
+        ),
+		(
+            x: 64,
+            y: 0,
+            width: 16,
+            height: 16,
+        ),
+        (
+            x: 80,
+            y: 0,
+            width: 16,
+            height: 16,
+        ),
+		(
+            x: 96,
             y: 0,
             width: 16,
             height: 16,
